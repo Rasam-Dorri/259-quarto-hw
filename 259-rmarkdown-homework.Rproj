@@ -12,3 +12,131 @@ Encoding: UTF-8
 
 RnwWeave: Sweave
 LaTeX: pdfLaTeX
+
+---
+title: "Eye Tracking Data Cleaning"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Libraries
+
+```{r}
+library(tidyverse)
+library(here)
+```
+
+## Import and Clean Raw Data
+
+Read in and prepare the Area Under the Curve (AUC) data:
+
+```{r}
+# Read in raw AUC data
+auc <- read_csv(here("data_raw", "auc_bystim.csv"))
+
+# Define factors for stimulus
+stim_levels <- 1:7
+stim_labels <- c("Fallon","Feist","Pentatonix","Science","Rube","Plane","Dogs")
+
+# Convert 'stim' to factor with labels
+auc <- auc %>% 
+  mutate(stim = factor(stim, levels = stim_levels, labels = stim_labels))
+```
+
+## Participant Data Preparation
+
+```{r}
+# Read in participant data and rename columns for simplicity
+ppt <- read_csv(here("data_raw", "ppt_data.csv"))
+
+# Pivot and separate 'watched' variable
+ppt_long <- ppt %>% 
+  pivot_longer(cols = starts_with("Seen"), names_to = "stim", values_to = "watched") %>%
+  separate(stim, into = c(NA, "stim"))
+
+# Convert variables to factors
+ppt_long <- ppt_long %>% mutate(
+  stim = factor(stim),
+  watched = factor(watched, levels = c(1,2,3), labels = c("seen", "not seen", "not sure"))
+)
+```
+
+## Merge Data
+
+Merge AUC data with participant info:
+
+```{r}
+ds <- left_join(auc, ppt_long, by = c("id", "stim")) %>%
+  drop_na(AUC_sal:AUC_dist)
+
+# Write cleaned data to file
+ds %>% write_csv(here("data_cleaned", "cleaned_eye_tracking.csv"))
+```
+
+## Precision Analysis
+
+Investigate precision quality (smaller values are better):
+
+### Distribution of Precision
+
+```{r}
+ggplot(ds, aes(x = precision)) +
+  geom_histogram(binwidth = 0.1) +
+  geom_vline(xintercept = 2.5, linetype = "dashed", color = "red")
+```
+
+## Participants with Poor Precision
+
+Identify participants whose precision values exceed 2.5:
+
+```{r}
+ds %>% 
+  group_by(id, age_group) %>% 
+  summarize(precision = mean(precision, na.rm = TRUE)) %>% 
+  filter(precision > 2.5)
+```
+
+## Precision by Age Group
+
+Explore whether precision differs across age groups:
+
+```{r}
+# Summary table
+ds %>% 
+  group_by(age_group) %>% 
+  summarize(mean_precision = mean(precision, na.rm = TRUE),
+            min_precision = min(precision, na.rm = TRUE),
+            max_precision = max(precision, na.rm = TRUE))
+
+# Boxplot of precision by age group
+ggplot(ds, aes(x = age_group, y = precision)) +
+  geom_boxplot() +
+  geom_hline(yintercept = 2.5, linetype = "dashed", color = "red")
+
+# Scatter plot of precision by age
+ggplot(ds, aes(x = age, y = precision)) +
+  geom_point(alpha = 0.6) +
+  geom_hline(yintercept = 2.5, linetype = "dashed", color = "red")
+```
+
+## Check for Errors in Age
+
+Convert age from days to years and verify correctness:
+
+```{r}
+ds <- ds %>% mutate(age_years = age / 365.25)
+
+# Boxplot by age group
+ggplot(ds, aes(x = age_group, y = age_years)) +
+  geom_boxplot() +
+  labs(title = "Age Distribution by Group")
+
+# Summary table of age in years by group
+ds %>%
+  group_by(age_group) %>%
+  summarize(mean_age_years = mean(age_years),
+            min_age = min(age_years),
+            max_age = max(age_years))
